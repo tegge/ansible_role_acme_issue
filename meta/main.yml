@@ -1,0 +1,48 @@
+---
+galaxy_info:
+  role_name: ansible_role_acme_issue
+  author: tegge
+  description: Ansible role for automated ACME certificate issuance and renewal with http-01 challenge support
+  company: ""
+  
+  license: MIT
+  
+  min_ansible_version: "2.14"
+  
+  platforms:
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+    - name: Rocky
+      versions:
+        - "8"
+        - "9"
+    - name: AlmaLinux
+      versions:
+        - "8"
+        - "9"
+  
+  galaxy_tags:
+    - acme
+    - certificates
+    - ssl
+    - tls
+    - letsencrypt
+    - stepca
+    - automation
+    - security
+    - pki
+
+dependencies: []
+
+collections:
+  - community.crypto

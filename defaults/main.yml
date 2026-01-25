@@ -1,0 +1,36 @@
+# roles/acme_issue/defaults/main.yml
+
+# --- Step-CA Server Configuration ---
+step_ca_host: "ca.example.com"
+step_ca_port: 8443
+
+# --- ACME Server Configuration ---
+acme_directory_url: "https://ca.example.com/acme/directory"
+acme_account_key_path: "/etc/ssl/private/acme_account.key"
+
+# --- Certificate Details (Required Inputs) ---
+# The primary domain name for the certificate
+cert_common_name: ""
+# A list of all domain names (including the common name) for the cert
+cert_sans: []
+# A unique name for this service (e.g., "nextcloud", "grafana")
+cert_service_name: ""
+
+# --- File Paths and Permissions ---
+# The webroot directory for placing the http-01 challenge file
+cert_webroot: "/var/www/html"
+# The directory to install the final certificate and key
+cert_install_dir: "/etc/ssl"
+# The owner and group for the final certificate files
+cert_owner: "root"
+cert_group: "root"
+
+# --- Service to Reload ---
+# The name of the web server service to reload on certificate change
+web_server_service_name: "nginx"
+
+# --- Certificate Renewal Settings ---
+# Renew certificate if it expires within this many days
+cert_renewal_threshold_days: 30
+# Force certificate renewal even if not expiring (for testing/debugging)
+cert_force_renewal: false

@@ -1,0 +1,175 @@
+# roles/acme_issue/tasks/main.yml
+
+- name: Ensure ca-certificates package present
+  ansible.builtin.apt:
+    name: ca-certificates
+    state: present
+    update_cache: true
+
+- name: Fetch step-ca roots bundle
+  ansible.builtin.get_url:
+    url: "https://{{ step_ca_host }}:{{ step_ca_port }}/roots.pem"
+    dest: "/usr/local/share/ca-certificates/step-root.crt"
+    mode: "0644"
+    validate_certs: false
+
+- name: Update CA trust now
+  ansible.builtin.command: update-ca-certificates
+  changed_when: false
+
+- name: Ensure ACME challenge path exists
+  ansible.builtin.file:
+    path: "{{ cert_webroot }}/.well-known/acme-challenge"
+    state: directory
+    owner: "{{ cert_owner }}"
+    group: "{{ cert_group }}"
+    mode: "0755"
+
+- name: Define certificate file paths
+  ansible.builtin.set_fact:
+    service_key_path: "{{ cert_install_dir }}/{{ cert_service_name }}.key"
+    service_csr_path: "{{ cert_install_dir }}/{{ cert_service_name }}.csr"
+    service_cert_path: "{{ cert_install_dir }}/{{ cert_service_name }}.crt"
+    service_chain_path: "{{ cert_install_dir }}/{{ cert_service_name }}-chain.crt"
+    service_fullchain_path: "{{ cert_install_dir }}/{{ cert_service_name }}-fullchain.crt"
+
+- name: Check if certificate exists
+  ansible.builtin.stat:
+    path: "{{ service_cert_path }}"
+  register: existing_cert
+
+- name: Get certificate expiry information
+  community.crypto.x509_certificate_info:
+    path: "{{ service_cert_path }}"
+  register: cert_info
+  when: existing_cert.stat.exists
+
+- name: Calculate days until expiry
+  ansible.builtin.set_fact:
+    cert_days_remaining: "{{ ((cert_info.not_after | to_datetime('%Y%m%d%H%M%SZ')) - (ansible_date_time.date | to_datetime('%Y-%m-%d'))).days }}"
+  when: existing_cert.stat.exists
+
+- name: Determine if renewal is needed
+  ansible.builtin.set_fact:
+    cert_needs_renewal: >-
+      {{
+        cert_force_renewal | bool or
+        not existing_cert.stat.exists or
+        (cert_days_remaining | int) <= (cert_renewal_threshold_days | int)
+      }}
+
+- name: Display certificate status
+  ansible.builtin.debug:
+    msg: >
+      Certificate status: {% if not existing_cert.stat.exists %}Not found - will issue new certificate
+      {% elif cert_force_renewal | bool %}Force renewal enabled
+      {% else %}{{ cert_days_remaining }} days remaining - {% if cert_needs_renewal %}renewal needed (threshold: {{ cert_renewal_threshold_days }} days){% else %}no renewal needed{% endif %}{% endif %}
+
+- name: Generate service private key (ECDSA P-256)
+  community.crypto.openssl_privatekey:
+    path: "{{ service_key_path }}"
+    type: ECC
+    curve: secp256r1
+    owner: "{{ cert_owner }}"
+    group: "{{ cert_group }}"
+    mode: "0640"
+    force: false
+
+- name: Generate CSR for the service (ECDSA)
+  community.crypto.openssl_csr:
+    path: "{{ service_csr_path }}"
+    privatekey_path: "{{ service_key_path }}"
+    common_name: "{{ cert_common_name }}"
+    subject_alt_name: "{{ cert_sans | map('regex_replace', '^(.*)$', 'DNS:\\1') | list }}"
+    force: true
+  when: cert_needs_renewal | bool
+
+- name: Ensure ACME account is registered
+  community.crypto.acme_account:
+    acme_directory: "{{ acme_directory_url }}"
+    account_key_src: "{{ acme_account_key_path }}"
+    state: present
+  register: acme_acct
+  when: cert_needs_renewal | bool
+
+- name: Create certificate order
+  community.crypto.acme_certificate_order_create:
+    acme_directory: "{{ acme_directory_url }}"
+    account_key_src: "{{ acme_account_key_path }}"
+    account_uri: "{{ acme_acct.account_uri }}"
+    csr: "{{ service_csr_path }}"
+  register: crt_order
+  when: cert_needs_renewal | bool
+
+- name: Filter http-01 challenge items
+  ansible.builtin.set_fact:
+    http01_items: "{{ crt_order.challenge_data | selectattr('challenges.http-01', 'defined') | list }}"
+  when: cert_needs_renewal | bool and not ansible_check_mode
+
+- name: Publish ACME http-01 tokens
+  ansible.builtin.copy:
+    dest: "{{ cert_webroot }}/{{ item.challenges['http-01']['resource'] }}"
+    content: "{{ item.challenges['http-01']['resource_value'] }}"
+    owner: "{{ cert_owner }}"
+    group: "{{ cert_group }}"
+    mode: "0644"
+  loop: "{{ http01_items }}"
+  when: cert_needs_renewal | bool and not ansible_check_mode
+
+- name: Validate http-01 challenges
+  community.crypto.acme_certificate_order_validate:
+    acme_directory: "{{ acme_directory_url }}"
+    account_key_src: "{{ acme_account_key_path }}"
+    account_uri: "{{ acme_acct.account_uri }}"
+    challenge: http-01
+    order_uri: "{{ crt_order.order_uri }}"
+  when: cert_needs_renewal | bool and not ansible_check_mode
+
+- name: Finalize order and retrieve certificate
+  community.crypto.acme_certificate_order_finalize:
+    acme_directory: "{{ acme_directory_url }}"
+    account_key_src: "{{ acme_account_key_path }}"
+    account_uri: "{{ acme_acct.account_uri }}"
+    order_uri: "{{ crt_order.order_uri }}"
+    csr: "{{ service_csr_path }}"
+    cert_dest: "{{ service_cert_path }}"
+    chain_dest: "{{ service_chain_path }}"
+  register: cert_finalize_result
+  when: cert_needs_renewal | bool and not ansible_check_mode
+
+- name: Read server certificate
+  ansible.builtin.slurp:
+    src: "{{ service_cert_path }}"
+  register: slurped_server_cert
+  when: cert_needs_renewal | bool and cert_finalize_result.changed and not ansible_check_mode
+
+- name: Read chain certificate
+  ansible.builtin.slurp:
+    src: "{{ service_chain_path }}"
+  register: slurped_chain_cert
+  when: cert_needs_renewal | bool and cert_finalize_result.changed and not ansible_check_mode
+
+- name: Create fullchain certificate (server + chain)
+  ansible.builtin.copy:
+    content: "{{ slurped_server_cert.content | b64decode }}{{ slurped_chain_cert.content | b64decode }}"
+    dest: "{{ service_fullchain_path }}"
+    owner: "{{ cert_owner }}"
+    group: "{{ cert_group }}"
+    mode: "0644"
+  when: cert_needs_renewal | bool and cert_finalize_result.changed and not ansible_check_mode
+
+- name: Set ownership on new certificate files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: "{{ cert_owner }}"
+    group: "{{ cert_group }}"
+    mode: "0644"
+  loop:
+    - "{{ service_cert_path }}"
+    - "{{ service_chain_path }}"
+  when: cert_needs_renewal | bool and cert_finalize_result.changed and not ansible_check_mode
+
+- name: Set fact for service reload
+  ansible.builtin.set_fact:
+    acme_cert_changed: true
+  when: cert_needs_renewal | bool and cert_finalize_result.changed and not ansible_check_mode

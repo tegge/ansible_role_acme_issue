@@ -1,0 +1,45 @@
+# Ansible
+*.retry
+.ansible/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Testing
+.molecule/
+.cache/
+.pytest_cache/
+
+# Vault files (keep examples)
+**/vault.yml
+*.vault
+.vault_pass
+
+# Certificates and keys (development/testing)
+*.key
+*.crt
+*.csr
+*.pem
+!*.key.example
+!*.crt.example
