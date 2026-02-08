@@ -4,11 +4,11 @@ galaxy_info:
   author: tegge
   description: Ansible role for automated ACME certificate issuance and renewal with http-01 challenge support
   company: ""
-  
+
   license: MIT
-  
+
   min_ansible_version: "2.14"
-  
+
   platforms:
     - name: EL
       versions:
@@ -24,13 +24,11 @@ galaxy_info:
         - jammy
     - name: Rocky
       versions:
-        - "8"
-        - "9"
+        - all
     - name: AlmaLinux
       versions:
-        - "8"
-        - "9"
-  
+        - all
+
   galaxy_tags:
     - acme
     - certificates
