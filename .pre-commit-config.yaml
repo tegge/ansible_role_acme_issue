@@ -1,0 +1,31 @@
+---
+repos:
+  - repo: local
+    hooks:
+      - id: yamllint-requirements
+        name: yamllint (exclude roles from requirements.yml)
+        language: system
+        entry: >
+          bash -c '
+          set -euo pipefail
+          ignore_paths=""
+          if [ -f requirements.yml ]; then
+            while IFS= read -r role_name; do
+              [ -z "$role_name" ] && continue
+              ignore_paths="${ignore_paths},roles/${role_name}/**"
+            done < <(awk "/^roles:/ {in_roles=1; next} /^[^[:space:]]/ && in_roles {in_roles=0} in_roles && \$1==\"-\" && \$2==\"name:\" {print \$3}" requirements.yml)
+          fi
+          ignore_paths="${ignore_paths#,}"
+          if [ -n "$ignore_paths" ]; then
+            yamllint -c .yamllint.yml --ignore "$ignore_paths" .
+          else
+            yamllint -c .yamllint.yml .
+          fi
+          '
+        pass_filenames: false
+        files: \.(yaml|yml)$
+  - repo: https://github.com/ansible-community/ansible-lint.git
+    rev: v25.6.1
+    hooks:
+      - id: ansible-lint
+        files: \.(yaml|yml)$
